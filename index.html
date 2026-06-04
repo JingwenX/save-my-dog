@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Save My Dog</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+    }
+    #ui {
+      width: 480px;
+      background: linear-gradient(to bottom, #d4a855, #c8963a);
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: 12px 12px 0 0;
+      border: 3px solid #a07020;
+      border-bottom: none;
+    }
+    #ui .btn {
+      width: 38px; height: 38px;
+      background: linear-gradient(to bottom, #f0c040, #d4900a);
+      border: 2px solid #8B5E00;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; cursor: pointer; flex-shrink: 0;
+    }
+    #stars { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    .star { font-size: 22px; }
+    #ink-bar-wrap {
+      flex: 1;
+      background: #555;
+      border-radius: 6px;
+      height: 14px;
+      border: 2px solid #333;
+      overflow: hidden;
+    }
+    #ink-bar {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(to right, #44cc44, #22aa22);
+      border-radius: 4px;
+      transition: width 0.05s linear;
+    }
+    #gem {
+      background: linear-gradient(to bottom, #b060e0, #8030c0);
+      border: 2px solid #501090;
+      border-radius: 20px;
+      padding: 3px 10px;
+      color: white;
+      font-size: 13px;
+      font-weight: bold;
+      display: flex; align-items: center; gap: 4px;
+      flex-shrink: 0;
+    }
+    #level-label {
+      text-align: center;
+      background: linear-gradient(to bottom, #c8963a, #b07820);
+      color: white;
+      font-size: 15px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      padding: 2px 0 4px;
+      width: 480px;
+      border-left: 3px solid #a07020;
+      border-right: 3px solid #a07020;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.4);
+    }
+    canvas {
+      display: block;
+      cursor: crosshair;
+      border: 3px solid #a07020;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+    }
+    #overlay {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255,255,255,0.92);
+      border-radius: 16px;
+      padding: 28px 40px;
+      text-align: center;
+      border: 3px solid #aaa;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      z-index: 10;
+    }
+    #overlay h2 { font-size: 32px; margin-bottom: 12px; }
+    #overlay button {
+      margin-top: 14px;
+      padding: 10px 28px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: 2px solid #555;
+      background: linear-gradient(to bottom, #f0c040, #d4900a);
+      font-weight: bold;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="ui">
+  <div class="btn">🏠</div>
+  <div class="btn" id="restart-btn">↺</div>
+  <div id="stars">
+    <span class="star">⭐</span>
+    <span class="star">⭐</span>
+    <span class="star">⭐</span>
+  </div>
+  <div id="ink-bar-wrap"><div id="ink-bar"></div></div>
+  <div id="gem">💎 0 <span style="font-size:18px;font-weight:bold;">+</span></div>
+</div>
+<div id="level-label">Level 1</div>
+<canvas id="gameCanvas" width="480" height="600"></canvas>
+<div id="overlay">
+  <h2 id="overlay-msg"></h2>
+  <div id="overlay-stars"></div>
+  <button id="overlay-btn">Play Again</button>
+</div>
+
+<script>
+const { Engine, Render, Runner, Bodies, Body, Composite, Events, Vector } = Matter;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const W = 480, H = 600;
+const GROUND_Y = 530;
+const GROUND_H = 20;
+const HIVE_X = 60, HIVE_Y = 280;
+const DOG_X = 280, DOG_Y = GROUND_Y - 38;
+const SURVIVE_TIME = 10; // seconds
+const MAX_INK = 600;     // px of line allowed
+const BEE_INTERVAL = 600; // ms between bee spawns
+const BEE_FORCE = 0.00018;
+
+// ─── Engine ───────────────────────────────────────────────────────────────────
+const engine = Engine.create();
+const world = engine.world;
+
+const render = Render.create({
+  canvas: document.getElementById('gameCanvas'),
+  engine,
+  options: { width: W, height: H, wireframes: false, background: '#f5ede0' }
+});
+Render.run(render);
+const runner = Runner.create();
+Runner.run(runner, engine);
+
+// ─── World Bodies ─────────────────────────────────────────────────────────────
+const ground = Bodies.rectangle(W / 2, GROUND_Y + GROUND_H / 2, W + 40, GROUND_H, {
+  isStatic: true, label: 'ground',
+  render: { fillStyle: '#5cb85c' }
+});
+const wallL = Bodies.rectangle(-10, H / 2, 20, H, { isStatic: true, render: { fillStyle: 'transparent' } });
+const wallR = Bodies.rectangle(W + 10, H / 2, 20, H, { isStatic: true, render: { fillStyle: 'transparent' } });
+const ceiling = Bodies.rectangle(W / 2, -10, W + 40, 20, { isStatic: true, render: { fillStyle: 'transparent' } });
+Composite.add(world, [ground, wallL, wallR, ceiling]);
+
+// Dog body (static so it stays put — bees will "touch" it for lose condition)
+const dog = Bodies.circle(DOG_X, DOG_Y, 32, {
+  isStatic: true, label: 'dog',
+  render: { fillStyle: 'transparent' }
+});
+Composite.add(world, dog);
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let points = [];
+let isDrawing = false;
+let barrierPlaced = false;
+let inkUsed = 0;
+let gamePhase = 'draw'; // 'draw' | 'countdown' | 'win' | 'lose'
+let countdown = SURVIVE_TIME;
+let countdownTimer = null;
+let beeInterval = null;
+let bees = [];
+let drawnSegments = []; // {p1, p2} for visual rendering
+
+const inkBar = document.getElementById('ink-bar');
+updateInkBar();
+
+function updateInkBar() {
+  const pct = Math.max(0, (1 - inkUsed / MAX_INK)) * 100;
+  inkBar.style.width = pct + '%';
+  if (pct < 30) inkBar.style.background = 'linear-gradient(to right, #e04444, #aa2222)';
+  else if (pct < 60) inkBar.style.background = 'linear-gradient(to right, #f0a020, #c07010)';
+  else inkBar.style.background = 'linear-gradient(to right, #44cc44, #22aa22)';
+}
+
+// ─── Drawing ──────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+
+canvas.addEventListener('mousedown', e => {
+  if (barrierPlaced || gamePhase !== 'draw') return;
+  isDrawing = true;
+  const p = canvasPos(e);
+  points = [p];
+  drawnSegments = [];
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!isDrawing) return;
+  const p = canvasPos(e);
+  const last = points[points.length - 1];
+  const dist = Math.hypot(p.x - last.x, p.y - last.y);
+  if (dist < 8) return;
+  if (inkUsed + dist > MAX_INK) {
+    // Clamp to remaining ink
+    const ratio = (MAX_INK - inkUsed) / dist;
+    const clamped = { x: last.x + (p.x - last.x) * ratio, y: last.y + (p.y - last.y) * ratio };
+    points.push(clamped);
+    drawnSegments.push({ p1: last, p2: clamped });
+    inkUsed = MAX_INK;
+    updateInkBar();
+    finishDrawing();
+    return;
+  }
+  points.push(p);
+  drawnSegments.push({ p1: last, p2: p });
+  inkUsed += dist;
+  updateInkBar();
+});
+
+canvas.addEventListener('mouseup', () => {
+  if (!isDrawing) return;
+  finishDrawing();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (isDrawing) finishDrawing();
+});
+
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function finishDrawing() {
+  if (!isDrawing) return;
+  isDrawing = false;
+  if (points.length < 2) return;
+  barrierPlaced = true;
+  spawnBarrier(points);
+  startGameplay();
+}
+
+function spawnBarrier(pts) {
+  const thickness = 12;
+  const parts = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p1 = pts[i], p2 = pts[i + 1];
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    if (len < 1) continue;
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    parts.push(Bodies.rectangle(cx, cy, Math.max(len, 2), thickness, { angle }));
+  }
+  if (parts.length === 0) return;
+  const barrier = Body.create({
+    parts, isStatic: false, density: 0.003, restitution: 0.2, friction: 0.8,
+    render: { fillStyle: 'rgba(0,0,0,0)' } // invisible — we draw it manually
+  });
+  Composite.add(world, barrier);
+}
+
+// ─── Gameplay ─────────────────────────────────────────────────────────────────
+function startGameplay() {
+  gamePhase = 'countdown';
+  countdown = SURVIVE_TIME;
+
+  countdownTimer = setInterval(() => {
+    countdown--;
+    if (countdown <= 0) {
+      clearInterval(countdownTimer);
+      clearInterval(beeInterval);
+      if (gamePhase === 'countdown') triggerWin();
+    }
+  }, 1000);
+
+  beeInterval = setInterval(spawnBee, BEE_INTERVAL);
+  spawnBee(); // immediate first bee
+}
+
+function spawnBee() {
+  const bee = Bodies.circle(HIVE_X + 30, HIVE_Y, 6, {
+    label: 'bee',
+    density: 0.001, restitution: 0.5, frictionAir: 0.01,
+    render: { fillStyle: 'transparent' }
+  });
+  Composite.add(world, bee);
+  bees.push(bee);
+}
+
+// Apply bee forces each frame
+Events.on(engine, 'beforeUpdate', () => {
+  if (gamePhase !== 'countdown') return;
+  const target = dog.position;
+  bees.forEach(bee => {
+    const dir = Vector.normalise(Vector.sub(target, bee.position));
+    Body.applyForce(bee, bee.position, Vector.mult(dir, BEE_FORCE));
+  });
+});
+
+// Collision: bee hits dog → lose
+Events.on(engine, 'collisionStart', e => {
+  if (gamePhase !== 'countdown') return;
+  e.pairs.forEach(pair => {
+    const labels = [pair.bodyA.label, pair.bodyB.label];
+    if (labels.includes('bee') && labels.includes('dog')) {
+      triggerLose();
+    }
+  });
+});
+
+function triggerWin() {
+  gamePhase = 'win';
+  clearInterval(beeInterval);
+  showOverlay('🎉 You Win!', '⭐⭐⭐');
+}
+
+function triggerLose() {
+  if (gamePhase !== 'countdown') return;
+  gamePhase = 'lose';
+  clearInterval(countdownTimer);
+  clearInterval(beeInterval);
+  showOverlay('💥 Oops! Try Again', '');
+}
+
+function showOverlay(msg, stars) {
+  const ov = document.getElementById('overlay');
+  document.getElementById('overlay-msg').textContent = msg;
+  document.getElementById('overlay-stars').textContent = stars;
+  ov.style.display = 'block';
+}
+
+document.getElementById('overlay-btn').onclick = resetGame;
+document.getElementById('restart-btn').onclick = resetGame;
+
+function resetGame() {
+  document.getElementById('overlay').style.display = 'none';
+  clearInterval(countdownTimer);
+  clearInterval(beeInterval);
+
+  // Remove all non-static bodies except dog
+  Composite.allBodies(world).forEach(b => {
+    if (!b.isStatic) Composite.remove(world, b);
+  });
+  bees = [];
+
+  points = [];
+  drawnSegments = [];
+  isDrawing = false;
+  barrierPlaced = false;
+  inkUsed = 0;
+  gamePhase = 'draw';
+  countdown = SURVIVE_TIME;
+  updateInkBar();
+
+  // Re-add dog
+  Composite.add(world, dog);
+}
+
+// ─── Custom Rendering (afterRender) ───────────────────────────────────────────
+Events.on(render, 'afterRender', () => {
+  const ctx = render.context;
+
+  // Brown brick ground below the green strip
+  drawBrickGround(ctx);
+
+  // Beehive
+  ctx.fillStyle = '#000';
+  ctx.font = '52px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🍯', HIVE_X, HIVE_Y);
+
+  // Bees
+  ctx.fillStyle = '#000';
+  ctx.font = '16px serif';
+  bees.forEach(bee => {
+    ctx.save();
+    ctx.translate(bee.position.x, bee.position.y);
+    ctx.rotate(bee.angle);
+    ctx.fillText('🐝', 0, 0);
+    ctx.restore();
+  });
+
+  // Dog face
+  ctx.fillStyle = '#000';
+  ctx.font = '60px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🐕', dog.position.x, dog.position.y);
+
+  // Drawn barrier — thick black stroke over physics body
+  if (drawnSegments.length > 0) {
+    ctx.save();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(drawnSegments[0].p1.x, drawnSegments[0].p1.y);
+    drawnSegments.forEach(seg => ctx.lineTo(seg.p2.x, seg.p2.y));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Live preview while drawing
+  if (isDrawing && points.length > 1) {
+    ctx.save();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    points.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Countdown clock
+  if (gamePhase === 'countdown' || gamePhase === 'win' || gamePhase === 'lose') {
+    const t = Math.max(0, countdown);
+    // Clock icon
+    ctx.font = '40px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⏰', W / 2, 60);
+    // Number on clock face
+    ctx.font = 'bold 18px Arial';
+    ctx.fillStyle = '#cc2222';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t, W / 2, 65);
+  }
+
+  // Draw instruction
+  if (gamePhase === 'draw' && !barrierPlaced) {
+    ctx.font = '15px Arial';
+    ctx.fillStyle = 'rgba(80,60,30,0.7)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Draw a line to protect the dog!', W / 2, 14);
+  }
+});
+
+function drawBrickGround(ctx) {
+  const brickW = 48, brickH = 22;
+  const startY = GROUND_Y + GROUND_H;
+  ctx.save();
+  ctx.fillStyle = '#c87941';
+  ctx.fillRect(0, startY, W, H - startY);
+
+  ctx.strokeStyle = '#a05a28';
+  ctx.lineWidth = 1.5;
+  for (let row = 0; row * brickH < H - startY + brickH; row++) {
+    const y = startY + row * brickH;
+    const offset = (row % 2) * (brickW / 2);
+    for (let col = -1; col * brickW < W + brickW; col++) {
+      const x = col * brickW + offset;
+      ctx.strokeRect(x, y, brickW, brickH);
+    }
+  }
+  ctx.restore();
+}
+</script>
+</body>
+</html>
