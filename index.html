@@ -267,7 +267,7 @@ function spawnBarrier(pts) {
   }
   if (parts.length === 0) return;
   const barrier = Body.create({
-    parts, isStatic: false, density: 0.003, restitution: 0.1, friction: 0.8, frictionAir: 0.05,
+    parts, isStatic: false, density: 0.04, restitution: 0.1, friction: 0.8, frictionAir: 0.1,
     render: { fillStyle: 'rgba(0,0,0,0)' } // invisible — we draw it manually
   });
   Composite.add(world, barrier);
@@ -295,19 +295,31 @@ function spawnBee() {
   const bee = Bodies.circle(HIVE_X + 30, HIVE_Y, 6, {
     label: 'bee',
     density: 0.001, restitution: 0.5, frictionAir: 0.01,
+    ignoreGravity: true,
     render: { fillStyle: 'transparent' }
   });
   Composite.add(world, bee);
   bees.push(bee);
 }
 
-// Apply bee forces each frame
+// Apply bee forces each frame using Manhattan distance
 Events.on(engine, 'beforeUpdate', () => {
   if (gamePhase !== 'countdown') return;
   const target = dog.position;
   bees.forEach(bee => {
-    const dir = Vector.normalise(Vector.sub(target, bee.position));
-    Body.applyForce(bee, bee.position, Vector.mult(dir, BEE_FORCE));
+    const dx = target.x - bee.position.x;
+    const dy = target.y - bee.position.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    let forceX = 0, forceY = 0;
+    if (absDx > absDy) {
+      forceX = dx > 0 ? BEE_FORCE : -BEE_FORCE;
+    } else {
+      forceY = dy > 0 ? BEE_FORCE : -BEE_FORCE;
+    }
+
+    Body.applyForce(bee, bee.position, { x: forceX, y: forceY });
   });
 });
 
