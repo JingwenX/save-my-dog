@@ -130,7 +130,7 @@
 </div>
 
 <script>
-const { Engine, Render, Runner, Bodies, Body, Composite, Events, Vector } = Matter;
+const { Engine, Render, Runner, Bodies, Body, Composite, Events, Vector, Query } = Matter;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const W = 480, H = 600;
@@ -141,7 +141,7 @@ const DOG_X = 280, DOG_Y = GROUND_Y - 38;
 const SURVIVE_TIME = 10; // seconds
 const MAX_INK = 600;     // px of line allowed
 const BEE_INTERVAL = 600; // ms between bee spawns
-const BEE_FORCE = 0.00018;
+const BEE_FORCE = 0.000036;
 
 // ─── Engine ───────────────────────────────────────────────────────────────────
 const engine = Engine.create();
@@ -183,6 +183,7 @@ let countdown = SURVIVE_TIME;
 let countdownTimer = null;
 let beeInterval = null;
 let bees = [];
+let barrierBody = null;
 let drawnSegments = []; // {p1, p2} for visual rendering
 
 const inkBar = document.getElementById('ink-bar');
@@ -254,7 +255,7 @@ function finishDrawing() {
 }
 
 function spawnBarrier(pts) {
-  const thickness = 12;
+  const thickness = 20;
   const parts = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const p1 = pts[i], p2 = pts[i + 1];
@@ -263,14 +264,15 @@ function spawnBarrier(pts) {
     const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
     if (len < 1) continue;
     const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-    parts.push(Bodies.rectangle(cx, cy, Math.max(len, 2), thickness, { angle }));
+    // Extend each segment slightly to eliminate gaps at joints
+    parts.push(Bodies.rectangle(cx, cy, Math.max(len + thickness, 2), thickness, { angle }));
   }
   if (parts.length === 0) return;
-  const barrier = Body.create({
+  barrierBody = Body.create({
     parts, isStatic: false, density: 0.04, restitution: 0.1, friction: 0.8, frictionAir: 0.1,
     render: { fillStyle: 'rgba(0,0,0,0)' } // invisible — we draw it manually
   });
-  Composite.add(world, barrier);
+  Composite.add(world, barrierBody);
 }
 
 // ─── Gameplay ─────────────────────────────────────────────────────────────────
@@ -294,32 +296,83 @@ function startGameplay() {
 function spawnBee() {
   const bee = Bodies.circle(HIVE_X + 30, HIVE_Y, 6, {
     label: 'bee',
-    density: 0.001, restitution: 0.5, frictionAir: 0.01,
-    ignoreGravity: true,
+    density: 0.001, restitution: 0.5, frictionAir: 0.05,
     render: { fillStyle: 'transparent' }
   });
   Composite.add(world, bee);
   bees.push(bee);
 }
 
-// Apply bee forces each frame using Manhattan distance
+function getBarrierBounds() {
+  if (!barrierBody) return null;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const parts = barrierBody.parts.length > 1 ? barrierBody.parts.slice(1) : barrierBody.parts;
+  parts.forEach(part => {
+    part.vertices.forEach(v => {
+      minX = Math.min(minX, v.x);
+      maxX = Math.max(maxX, v.x);
+      minY = Math.min(minY, v.y);
+      maxY = Math.max(maxY, v.y);
+    });
+  });
+  return { minX, maxX, minY, maxY };
+}
+
+// Apply bee forces each frame with waypoint navigation
 Events.on(engine, 'beforeUpdate', () => {
   if (gamePhase !== 'countdown') return;
   const target = dog.position;
-  bees.forEach(bee => {
-    const dx = target.x - bee.position.x;
-    const dy = target.y - bee.position.y;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
+  const obstacles = barrierBody ? [barrierBody] : [];
 
-    let forceX = 0, forceY = 0;
-    if (absDx > absDy) {
-      forceX = dx > 0 ? BEE_FORCE : -BEE_FORCE;
-    } else {
-      forceY = dy > 0 ? BEE_FORCE : -BEE_FORCE;
+  bees.forEach(bee => {
+    let moveTarget = target;
+
+    if (obstacles.length > 0) {
+      const directHit = Query.ray(obstacles, bee.position, target, 12);
+      if (directHit.length > 0) {
+        // Direct path blocked — find a corner around the barrier that has a clear path to dog
+        const bounds = getBarrierBounds();
+        if (bounds) {
+          const margin = 40;
+          const corners = [
+            { x: bounds.minX - margin, y: bounds.minY - margin },
+            { x: bounds.maxX + margin, y: bounds.minY - margin },
+            { x: bounds.minX - margin, y: bounds.maxY + margin },
+            { x: bounds.maxX + margin, y: bounds.maxY + margin },
+          ];
+          const reachable = corners.filter(c =>
+            Query.ray(obstacles, bee.position, c, 12).length === 0 &&
+            Query.ray(obstacles, c, target, 12).length === 0
+          );
+          if (reachable.length > 0) {
+            // Pick the closest reachable corner
+            moveTarget = reachable.reduce((best, c) => {
+              const d = Math.hypot(c.x - bee.position.x, c.y - bee.position.y);
+              const bd = Math.hypot(best.x - bee.position.x, best.y - bee.position.y);
+              return d < bd ? c : best;
+            });
+          }
+        }
+      }
     }
 
-    Body.applyForce(bee, bee.position, { x: forceX, y: forceY });
+    const angle = Math.atan2(moveTarget.y - bee.position.y, moveTarget.x - bee.position.x);
+    // Cancel gravity so bees always fly
+    const antiGrav = engine.gravity.y * engine.gravity.scale * bee.mass;
+    Body.applyForce(bee, bee.position, {
+      x: Math.cos(angle) * BEE_FORCE,
+      y: Math.sin(angle) * BEE_FORCE - antiGrav
+    });
+
+    // Cap velocity to prevent tunneling
+    const maxSpeed = 0.6;
+    const speed = Math.hypot(bee.velocity.x, bee.velocity.y);
+    if (speed > maxSpeed) {
+      Body.setVelocity(bee, {
+        x: (bee.velocity.x / speed) * maxSpeed,
+        y: (bee.velocity.y / speed) * maxSpeed
+      });
+    }
   });
 });
 
@@ -368,6 +421,7 @@ function resetGame() {
     if (!b.isStatic) Composite.remove(world, b);
   });
   bees = [];
+  barrierBody = null;
 
   points = [];
   drawnSegments = [];
