@@ -267,7 +267,7 @@ function spawnBarrier(pts) {
   }
   if (parts.length === 0) return;
   const barrier = Body.create({
-    parts, isStatic: false, density: 0.003, restitution: 0.2, friction: 0.8,
+    parts, isStatic: false, density: 0.003, restitution: 0.1, friction: 0.8, frictionAir: 0.05,
     render: { fillStyle: 'rgba(0,0,0,0)' } // invisible — we draw it manually
   });
   Composite.add(world, barrier);
@@ -402,24 +402,10 @@ Events.on(render, 'afterRender', () => {
   ctx.textBaseline = 'middle';
   ctx.fillText('🐕', dog.position.x, dog.position.y);
 
-  // Drawn barrier — thick black stroke over physics body
-  if (drawnSegments.length > 0) {
-    ctx.save();
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 10;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(drawnSegments[0].p1.x, drawnSegments[0].p1.y);
-    drawnSegments.forEach(seg => ctx.lineTo(seg.p2.x, seg.p2.y));
-    ctx.stroke();
-    ctx.restore();
-  }
-
   // Live preview while drawing
   if (isDrawing && points.length > 1) {
     ctx.save();
-    ctx.strokeStyle = '#111';
+    ctx.strokeStyle = '#000';
     ctx.lineWidth = 10;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
