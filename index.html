@@ -241,9 +241,50 @@ canvas.addEventListener('mouseleave', () => {
   if (isDrawing) finishDrawing();
 });
 
+// Touch support for mobile
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (barrierPlaced || gamePhase !== 'draw') return;
+  isDrawing = true;
+  const p = canvasPos(e.touches[0]);
+  points = [p];
+  drawnSegments = [];
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!isDrawing) return;
+  const p = canvasPos(e.touches[0]);
+  const last = points[points.length - 1];
+  const dist = Math.hypot(p.x - last.x, p.y - last.y);
+  if (dist < 8) return;
+  if (inkUsed + dist > MAX_INK) {
+    const ratio = (MAX_INK - inkUsed) / dist;
+    const clamped = { x: last.x + (p.x - last.x) * ratio, y: last.y + (p.y - last.y) * ratio };
+    points.push(clamped);
+    drawnSegments.push({ p1: last, p2: clamped });
+    inkUsed = MAX_INK;
+    updateInkBar();
+    finishDrawing();
+    return;
+  }
+  points.push(p);
+  drawnSegments.push({ p1: last, p2: p });
+  inkUsed += dist;
+  updateInkBar();
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!isDrawing) return;
+  finishDrawing();
+}, { passive: false });
+
 function canvasPos(e) {
   const rect = canvas.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
 }
 
 function finishDrawing() {
